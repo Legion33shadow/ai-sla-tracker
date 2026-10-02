@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Provider SLA Tracker 2026 — Uptime vs Promised SLA</title>
+<meta name="description" content="Track AI API uptime vs promised SLA. See who breaches their SLA. Real-time status from OpenAI, Anthropic, Google, Mistral. Free AI SLA monitoring tool.">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,sans-serif;background:#070710;color:#f0f0f0;min-height:100vh}
+.hero{text-align:center;padding:50px 20px 32px;background:linear-gradient(180deg,#0d0820,#070710)}
+.hero h1{font-size:clamp(22px,3.5vw,38px);font-weight:700;background:linear-gradient(135deg,#f59e0b,#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}
+.hero p{color:#555;font-size:14px}
+.wrap{max-width:1000px;margin:0 auto;padding:16px 16px 60px}
+.status-bar{display:flex;gap:16px;margin-bottom:20px;padding:14px 18px;background:#0d0d1e;border:1px solid #1e1e35;border-radius:12px;align-items:center;flex-wrap:wrap}
+.sb-item{font-size:12px;color:#6b7280;display:flex;align-items:center;gap:6px}
+.dot-live{width:7px;height:7px;border-radius:50%;background:#22c55e;animation:p 2s infinite}
+@keyframes p{50%{opacity:.2}}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-bottom:20px}
+.card{background:#0d0d1e;border:1px solid #1e1e35;border-radius:14px;overflow:hidden}
+.card-h{padding:14px 16px;border-bottom:1px solid #1e1e35;display:flex;justify-content:space-between;align-items:center}
+.pname{font-weight:700;font-size:15px}
+.status-badge{font-size:11px;padding:3px 10px;border-radius:20px;font-weight:600}
+.op{background:rgba(16,185,129,.1);color:#10b981;border:1px solid #10b981}
+.deg{background:rgba(249,115,22,.1);color:#f97316;border:1px solid #f97316}
+.inc{background:rgba(239,68,68,.1);color:#ef4444;border:1px solid #ef4444}
+.unk{background:#1e1e35;color:#6b7280}
+.card-body{padding:14px 16px}
+.sla-row{display:flex;justify-content:space-between;font-size:13px;margin-bottom:8px;align-items:center}
+.sla-k{color:#9ca3af}
+.sla-v{font-weight:600}
+.bar-wrap{margin:10px 0}
+.bar-label{display:flex;justify-content:space-between;font-size:11px;color:#6b7280;margin-bottom:4px}
+.bar{height:8px;border-radius:4px;background:#1e1e35;overflow:hidden}
+.bar-fill{height:100%;border-radius:4px;transition:width .5s}
+.above{background:linear-gradient(90deg,#10b981,#34d399)}
+.below{background:linear-gradient(90deg,#ef4444,#f87171)}
+.breach{margin-top:10px;padding:8px 10px;border-radius:6px;background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2);font-size:12px;color:#fca5a5}
+.incident-list{margin-top:10px}
+.inc-item{font-size:11px;color:#6b7280;padding:5px 0;border-bottom:1px solid #0d0d20}
+.inc-item:last-child{border:none}
+.legend{display:flex;gap:16px;font-size:11px;color:#6b7280;margin-bottom:14px;flex-wrap:wrap}
+.status-link{font-size:11px;color:#818cf8;text-decoration:none;display:block;margin-top:8px}
+.ft{text-align:center;padding:24px;color:#333;font-size:12px}.ft a{color:#f59e0b;text-decoration:none}
+</style>
+</head><body>
+<div class="hero"><h1>AI Provider SLA Tracker</h1><p>Promised uptime vs reality &middot; Breach detection &middot; Incident history &middot; Live status</p></div>
+<div class="wrap">
+<div class="status-bar">
+<div class="sb-item"><div class="dot-live"></div>Live monitoring</div>
+<div class="sb-item">Refreshes every 5 min</div>
+<div class="sb-item" id="last-update">Loading...</div>
+</div>
+<div class="legend">
+<span>🟢 Operational</span><span>🟠 Degraded</span><span>🔴 Incident</span>
+<span style="margin-left:auto">SLA bar: green = above promised | red = below</span>
+</div>
+<div class="grid" id="grid"></div>
+</div>
+<div class="ft">Powered by <a href="https://legion-api.com">LEGION Systems</a> &middot; <a href="https://gemmo.gumroad.com/l/ngtmw">API Pro €29/mo</a><br><small style="margin-top:4px;display:block">Status data from public provider status pages. Not a guarantee of uptime. LEGION is not liable for decisions based on this data.</small></div>
+<script>
+const API="https://api.legion-api.com";
+
+const PROVIDERS = [
+  {id:"openai",    name:"OpenAI",     sla_pct:99.9,  status_url:"https://status.openai.com",    color:"#10a37f"},
+  {id:"anthropic", name:"Anthropic",  sla_pct:99.9,  status_url:"https://status.anthropic.com", color:"#d97706"},
+  {id:"google",    name:"Google AI",  sla_pct:99.95, status_url:"https://status.cloud.google.com", color:"#4285f4"},
+  {id:"microsoft", name:"Microsoft",  sla_pct:99.9,  status_url:"https://status.azure.com",     color:"#00a1f1"},
+  {id:"mistral",   name:"Mistral AI", sla_pct:99.5,  status_url:"https://mistralstatus.com",    color:"#ef4444"},
+  {id:"github",    name:"GitHub",     sla_pct:99.9,  status_url:"https://www.githubstatus.com", color:"#333"},
+];
+
+const STATUS_APIS = {
+  openai:    "https://status.openai.com/api/v2/summary.json",
+  anthropic: "https://status.anthropic.com/api/v2/summary.json",
+  github:    "https://www.githubstatus.com/api/v2/summary.json",
+};
+
+async function fetchStatus(url) {
+  try {
+    const r = await fetch(url, {signal: AbortSignal.timeout(8000)});
+    if (!r.ok) return null;
+    return r.json();
+  } catch { return null; }
+}
+
+async function getAttest(provider) {
+  try {
+    const r = await fetch(`${API}/attest?subject=${provider}&days=30`, {signal: AbortSignal.timeout(10000)});
+    return r.ok ? r.json() : null;
+  } catch { return null; }
+}
+
+function estimatedUptime(critical, high, days=30) {
+  // Rough estimate: critical = 4h downtime, high = 1h
+  const downtime_hours = critical * 4 + high * 1;
+  const total_hours = days * 24;
+  return Math.max(0, ((total_hours - downtime_hours) / total_hours) * 100);
+}
+
+function renderCard(p, status_data, attest) {
+  const att = attest?.attestation || {};
+  const verdict = att.verdict || "UNKNOWN";
+  const critical = att.critical_count || 0;
+  const high = att.high_count || 0;
+  const est_uptime = estimatedUptime(critical, high);
+  const sla_met = est_uptime >= p.sla_pct;
+  const gap = est_uptime - p.sla_pct;
+
+  // Status from provider
+  let status_label = "UNKNOWN";
+  let status_cls = "unk";
+  if (status_data) {
+    const degraded = (status_data.components || []).filter(c => c.status && c.status !== "operational" && c.status !== "none");
+    const indicators = status_data.status || {};
+    if (indicators.indicator === "none") { status_label = "OPERATIONAL"; status_cls = "op"; }
+    else if (indicators.indicator === "minor" || degraded.length > 0) { status_label = "DEGRADED"; status_cls = "deg"; }
+    else if (indicators.indicator === "major") { status_label = "INCIDENT"; status_cls = "inc"; }
+    else { status_label = "OPERATIONAL"; status_cls = "op"; }
+  } else if (verdict === "CLEAN") { status_label = "OPERATIONAL"; status_cls = "op"; }
+  else if (verdict === "NOT_CLEAN" && critical > 0) { status_label = "INCIDENT"; status_cls = "inc"; }
+
+  const breach_html = !sla_met && (critical > 0 || high > 0)
+    ? `<div class="breach">⚠️ SLA breach: estimated ${est_uptime.toFixed(2)}% vs promised ${p.sla_pct}% (+${Math.abs(gap).toFixed(2)}% gap)</div>`
+    : "";
+
+  return `<div class="card">
+    <div class="card-h">
+      <div class="pname">${p.name}</div>
+      <span class="status-badge ${status_cls}">${status_label}</span>
+    </div>
+    <div class="card-body">
+      <div class="bar-wrap">
+        <div class="bar-label">
+          <span>Estimated uptime (30d)</span>
+          <span style="color:${sla_met?'#10b981':'#ef4444'}">${est_uptime.toFixed(2)}%</span>
+        </div>
+        <div class="bar"><div class="bar-fill ${sla_met?'above':'below'}" style="width:${Math.min(100,est_uptime)}%"></div></div>
+      </div>
+      <div class="sla-row"><span class="sla-k">Promised SLA</span><span class="sla-v">${p.sla_pct}%</span></div>
+      <div class="sla-row"><span class="sla-k">Critical incidents (30d)</span><span class="sla-v" style="color:${critical>0?'#ef4444':'#10b981'}">${critical}</span></div>
+      <div class="sla-row"><span class="sla-k">High severity (30d)</span><span class="sla-v" style="color:${high>0?'#f59e0b':'#10b981'}">${high}</span></div>
+      <div class="sla-row"><span class="sla-k">Corpus analyzed</span><span class="sla-v">${(att.corpus_rows_for_subject||0).toLocaleString()}</span></div>
+      ${breach_html}
+      <a class="status-link" href="${p.status_url}" target="_blank">Official status page →</a>
+      <a class="status-link" href="${API}/attest?subject=${p.id}&days=30" target="_blank">LEGION signed attestation →</a>
+    </div>
+  </div>`;
+}
+
+async function load() {
+  const grid = document.getElementById("grid");
+  // Parallel fetch
+  const [attests, statuses] = await Promise.all([
+    Promise.all(PROVIDERS.map(p => getAttest(p.id))),
+    Promise.all(PROVIDERS.map(p => STATUS_APIS[p.id] ? fetchStatus(STATUS_APIS[p.id]) : Promise.resolve(null)))
+  ]);
+  grid.innerHTML = PROVIDERS.map((p,i) => renderCard(p, statuses[i], attests[i])).join("");
+  document.getElementById("last-update").textContent = "Updated: " + new Date().toLocaleTimeString();
+}
+
+load();
+setInterval(load, 300000); // 5 min
+</script></body></html>
